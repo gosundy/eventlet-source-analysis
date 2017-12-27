@@ -18,6 +18,7 @@ greenlet最原始协程([参考](http://greenlet.readthedocs.io/en/latest/))
 
 ```python
 #greenlet(run=None, parent=None)
+
 from greenlet import greenlet
 def test1():
     print("1")
@@ -54,14 +55,20 @@ main暂停的地方,打印5。由于g1,g2有共同的父greenlet，所以没有�
 
 
 ```Python
-在使用eventlet.spawn创建协程(GreenThread继承greenlet)的时候，它会向hub注册自己的调度时间或者socket、io读写事件，等时间到或者有io请求的时候会switch该协程。它与greenlet的区别是，引入hub来管理协程。
+在使用eventlet.spawn创建协程(GreenThread继承greenlet)的时候，它会向
+hub注册自己的调度时间或者socket、io读写事件，等时间到或者有io请求的时
+候会switch该协程。它与greenlet的区别是，引入hub来管理协程。
+
 #调用eventlet.spawn创建协程
 # source in greenthread class
+
 def spawn(func, *args, **kwargs):
 	#获取单例hub
 	hub = hubs.get_hub()
+    
 	#创建协程，将hub.greenlet作为该协程的父协程。目的是当该协程运行结束或者异常时能由hub进行处理。
     g = GreenThread(hub.greenlet)
+    
 	#将自己注册到hub的schedule 
 	#param1:elapse time
 	#param2:时间到时，hub会调用g.switch，g.switch会运行下面用户func
@@ -89,7 +96,9 @@ class GreenThread(greenlet.greenlet):
 ```
 
 ```python
-#GreenThread协程，官方推荐使用spawn()创建，而不是自己手动使用GreenThread类创建。主要原因是要向hub注册自己。
+#GreenThread协程，官方推荐使用spawn()创建，而不是自己手动使用
+#GreenThread类创建。主要原因是要向hub注册自己。
+
 import eventlet
 def test1():
     print("1")
@@ -112,9 +121,13 @@ if __name__ == '__main__':
 3
 4
 5
-当主程序运行到eventlet.sleep(0)，程序会切换到hub.greenlet，hub会扫描调度表，然后g.switch到对应的协程。
-hub先是调用g1.switch到test1，打印1,2后，test1运行结束自动切换到父greenlet，即hub.greenlet。hub再次扫描调度表，调用g2.switch到test2,打印3,4。test2运行结束会切换到hub。hub g.switch到main。为什么hub会回
+当主程序运行到eventlet.sleep(0)，程序会切换到hub.greenlet，hub会扫
+描调度表，然后g.switch到对应的协程。
+hub先是调用g1.switch到test1，打印1,2后，test1运行结束自动切换到父
+greenlet，即hub.greenlet。hub再次扫描调度表，调用g2.switch到test2,
+打印3,4。test2运行结束会切换到hub。hub g.switch到main。为什么hub会回
 到main，先看下eventlet.sleep()源码。
+
 def sleep(seconds=0):
     hub = hubs.get_hub()
     current = getcurrent()
@@ -124,8 +137,57 @@ def sleep(seconds=0):
         hub.switch()
     finally:
         timer.cancel()
-当sleep时，也会将自己的greenlet注册到hub中，然后hub会switch到main，继续执行sleep()下面的代码。
+当sleep时，也会将自己的greenlet注册到hub中，然后hub会switch到main，
+继续执行sleep()下面的代码。
 
+```
+
+```python
+#eventlet获取协程返回值（使用event）
+import eventlet
+def test1():
+    print(1)
+    print(2)
+    return "test1 result"
+def test2():
+    print(3)
+    print(4)
+    return "test2 result"
+    
+if __name__ == '__main__':
+
+    g1=eventlet.spawn(test1)
+    g2=eventlet.spawn(test2)
+    g1Result=g1.wait()
+    g2Result=g2.wait()
+    print("g1: ",g1Result)
+    print("g2: ",g2Result)
+
+```
+
+```python
+#协程之间交互
+import eventlet
+g1Event=eventlet.event.Event()
+g2Event=eventlet.event.Event()
+def test1():
+    print(1)
+    result=g1Event.wait()
+    print(result)
+    print(2)
+    g2Event.send("result from test1")
+def test2():
+    print(3)
+    g1Event.send("result from test2")
+    result=g2Event.wait()
+    print(result)
+    print(4)   
+if __name__ == '__main__':
+
+    g1=eventlet.spawn(test1)
+    g2=eventlet.spawn(test2)
+    g1Result=g1.wait()
+    g2Result=g2.wait()
 ```
 
 
@@ -150,7 +212,9 @@ if __name__ == '__main__':
 
 ```python
 #运行结果
-只会循环打印 0,1，test2不会运行。因为test1没有调用hub.switch到hub.greenlet。结果导致hub不能调用g2.switch到test2。即当一个协程持续执行时，其它协程将得不到运行机会。
+只会循环打印 0,1，test2不会运行。因为test1没有调用hub.switch到
+hub.greenlet。结果导致hub不能调用g2.switch到test2。即当一个协程持续
+执行时，其它协程将得不到运行机会。
 ```
 
 ```python
@@ -168,13 +232,13 @@ def test2():
 if __name__ == '__main__':
     g1=eventlet.spawn(test1)
     g2=eventlet.spawn(test2)
-    while True:
-        eventlet.sleep(0)
-sleep是用来从当前协程切换到hub协程，从而test2可以运行。这样虽然可以达到需求，可是循环调用eventlet.sleep(0)会导致占用大量的cpu资源。
+    g1.wait()
+    g2.wait()
+sleep是用来从当前协程切换到hub协程，从而test2可以运行。
 ```
 
 ```python
-#改进v2版本，使用协程池
+#使用协程池实现
 import eventlet
 from eventlet.greenpool import GreenPool
 def test1():
@@ -575,7 +639,525 @@ tpool线程与普通线程的区别。tpool.execute可以阻塞当前协程，�
 
 ![tpool](./png/tpool.png)
 
+#####　green socket
+
+***
+
+eventlet将传统socket封装为“绿色”socket，它是非阻塞，基于poll,可以很方便用在协程中。
+
+```python
+#例子1
+########################server##########################
+from eventlet import greenio
+from eventlet.greenpool import GreenPool
+import socket
+def worker(sock):
+    while True:
+        data=sock.recv(1024)
+        if not data:
+            break
+        print(data)
+        sock.send("welcome!")
+if __name__ == '__main__':
+    sock=greenio.GreenSocket(family_or_realsock=socket.AF_INET)
+    sock.bind(("127.0.0.1",6666))
+    sock.listen(10)
+    #create greenpool
+    coroutinePool=GreenPool(1000)
+    while True:
+        clientSocket,address=sock.accept()
+        coroutinePool.spawn(worker,clientSocket)
+       
+######################client#############################
+from eventlet import greenio
+if __name__ == '__main__':
+    socket=greenio.GreenSocket()
+    socket.connect(("127.0.0.1",6666))
+    socket.send("hello, John")
+    recv=socket.recv(1024)
+    if recv:
+        print(recv)
+```
+
+```python
+#简化版v1
+####################server##########################
+from eventlet.convenience import listen
+from eventlet.greenpool import GreenPool
+def worker(sock):
+    while True:
+        data=sock.recv(1024)
+        if not data:
+            break
+        print(data)
+        sock.send("welcome!")
+if __name__ == '__main__':
+    sock=listen(("127.0.0.1",6666))
+    pool=GreenPool(1000)
+    while True:
+        clientSock,address=sock.accept()
+        pool.spawn(worker,clientSock)
+        
+###################client###########################
+from eventlet.convenience import connect
+if __name__ == '__main__':
+    sock=connect(("127.0.0.1",6666))
+    sock.send("hello,server")
+    data=sock.recv(1024)
+    if data:
+        print(data)
+        
+```
+
+```python
+#简化版v2
+#####################server########################
+from eventlet.convenience import listen, serve
+def worker(sock,addr):
+    while True:
+        data=sock.recv(1024)
+        if not data:
+            break
+        print(data)
+        sock.send("welcome!")
+if __name__ == '__main__':
+    sock=listen(("127.0.0.1",6666))
+    serve(sock,worker)
+###################client###########################
+from eventlet.convenience import connect
+if __name__ == '__main__':
+    sock=connect(("127.0.0.1",6666))
+    sock.send("hello,server")
+    data=sock.recv(1024)
+    if data:
+        print(data)   
+```
+
+> 那么为什么“绿色”socket可以与协程很好的配合？
+
+因为当在协程中使用socket.recv时，recv内部会向hub 添加“Read” listener。listener中有个参数为当前协程。所以，当hub通过poll到该socket read事件时会switch到该协程。
+
+添加“READ”listener
+
+listener = hub.add(hub.READ, fileno, current.switch, current.throw, mark_as_closed)
+
+同理当在协程中使用socket.send一样会添加listener。不过是“WRITE”listener
+
+listener = hub.add(hub.WRITE, fileno, current.switch, current.throw, mark_as_closed)
+
+> GreenSocket类部分源码分析
+
+```python
+#send()
+def send(self, data, flags=0):
+        return self._send_loop(self.fd.send, data, flags)
+ 
+def _send_loop(self, send_method, data, *args):
+        if self.act_non_blocking:
+            return send_method(data, *args)
+
+        while 1:
+            try:
+                return send_method(data, *args)
+            except socket.error as e:
+                eno = get_errno(e)
+                if eno == errno.ENOTCONN or eno not in SOCKET_BLOCKING:
+                    raise
+
+            try:
+                self._trampoline(self.fd, write=True, timeout=self.gettimeout(),
+                                 timeout_exc=socket.timeout("timed out"))
+            except IOClosed:
+                raise socket.error(errno.ECONNRESET, 'Connection closed by another thread')
+```
+
+```python
+#recv()
+def recv(self, bufsize, flags=0):
+        return self._recv_loop(self.fd.recv, bufsize, flags)
+ def _recv_loop(self, recv_meth, *args):
+        fd = self.fd
+        if self.act_non_blocking:
+            return recv_meth(*args)
+
+        while True:
+            try:
+                # recv: bufsize=0?
+                # recv_into: buffer is empty?
+                # This is needed because behind the scenes we use sockets in
+                # nonblocking mode and builtin recv* methods. Attempting to read
+                # 0 bytes from a nonblocking socket using a builtin recv* method
+                # does not raise a timeout exception. Since we're simulating
+                # a blocking socket here we need to produce a timeout exception
+                # if needed, hence the call to trampoline.
+                if not args[0]:
+                    self._read_trampoline()
+                return recv_meth(*args)
+            except socket.error as e:
+                if get_errno(e) in SOCKET_BLOCKING:
+                    pass
+                elif get_errno(e) in SOCKET_CLOSED:
+                    return b''
+                else:
+                    raise
+
+            try:
+                self._read_trampoline()
+            except IOClosed as e:
+                # Perhaps we should return '' instead?
+                raise EOFError()
+def _read_trampoline(self):
+        self._trampoline(
+            self.fd,
+            read=True,
+            timeout=self.gettimeout(),
+            timeout_exc=socket.timeout("timed out"))
+```
+
+从源码中可以知道，无论是send还是recv，它们都会调用_trampoline()。
+
+```python
+ def _trampoline(self, fd, read=False, write=False, timeout=None, timeout_exc=None):
+        """ We need to trampoline via the event hub.
+            We catch any signal back from the hub indicating that the operation we
+            were waiting on was associated with a filehandle that's since been
+            invalidated.
+        """
+        if self._closed:
+            # If we did any logging, alerting to a second trampoline attempt on a closed
+            # socket here would be useful.
+            raise IOClosed()
+        try:
+            return trampoline(fd, read=read, write=write, timeout=timeout,
+                              timeout_exc=timeout_exc,
+                              mark_as_closed=self._mark_as_closed)
+        except IOClosed:
+            # This socket's been obsoleted. De-fang it.
+            self._mark_as_closed()
+            raise
+```
+
+正是通过_trampoline()来调用hubs.trampoline()
+
+```python
+#hubs.trampoline
+def trampoline(fd, read=None, write=None, timeout=None,
+               timeout_exc=timeout.Timeout,
+               mark_as_closed=None):
+    """Suspend the current coroutine until the given socket object or file
+    descriptor is ready to *read*, ready to *write*, or the specified
+    *timeout* elapses, depending on arguments specified.
+
+    To wait for *fd* to be ready to read, pass *read* ``=True``; ready to
+    write, pass *write* ``=True``. To specify a timeout, pass the *timeout*
+    argument in seconds.
+
+    If the specified *timeout* elapses before the socket is ready to read or
+    write, *timeout_exc* will be raised instead of ``trampoline()``
+    returning normally.
+
+    .. note :: |internal|
+    """
+    t = None
+    hub = get_hub()
+    current = greenlet.getcurrent()
+    assert hub.greenlet is not current, 'do not call blocking functions from the mainloop'
+    assert not (
+        read and write), 'not allowed to trampoline for reading and writing'
+    try:
+        fileno = fd.fileno()
+    except AttributeError:
+        fileno = fd
+    if timeout is not None:
+        def _timeout(exc):
+            # This is only useful to insert debugging
+            current.throw(exc)
+        t = hub.schedule_call_global(timeout, _timeout, timeout_exc)
+    try:
+        if read:
+            listener = hub.add(hub.READ, fileno, current.switch, current.throw, mark_as_closed)
+        elif write:
+            listener = hub.add(hub.WRITE, fileno, current.switch, current.throw, mark_as_closed)
+        try:
+            return hub.switch()
+        finally:
+            hub.remove(listener)
+    finally:
+        if t is not None:
+            t.cancel()
+```
+
+hubs.trampoline()向hub添加“read”，“write”侦听事件。
 
 
 
+###### hub是什么，它是怎么工作的？
 
+***
+
+hub是用来负责协程调度。hub本身也是greenlet。它循环检测timer队列，然后对timer中的协程进行调度。
+
+```python
+class BaseHub(object):
+def __init__(self, clock=time.time):
+        self.listeners = {READ: {}, WRITE: {}}
+        self.secondaries = {READ: {}, WRITE: {}}
+        self.closed = []
+
+        self.clock = clock
+        #创建greenlet，用来运行run函数
+        self.greenlet = greenlet.greenlet(self.run)
+        self.stopping = False
+        self.running = False
+        self.timers = []
+        self.next_timers = []
+        self.lclass = FdListener
+        self.timers_canceled = 0
+        self.debug_exceptions = True
+        self.debug_blocking = False
+        self.debug_blocking_resolution = 1
+        
+        
+#switch到run函数        
+def switch(self):
+        cur = greenlet.getcurrent()
+        assert cur is not self.greenlet, 'Cannot switch to MAINLOOP from MAINLOOP'
+        switch_out = getattr(cur, 'switch_out', None)
+        if switch_out is not None:
+            try:
+                switch_out()
+            except:
+                self.squelch_generic_exception(sys.exc_info())
+        self.ensure_greenlet()
+        try:
+            if self.greenlet.parent is not cur:
+                cur.parent = self.greenlet
+        except ValueError:
+            pass  # gets raised if there is a greenlet parent cycle
+        clear_sys_exc_info()
+        return self.greenlet.switch()
+ 
+
+
+#每次都会检测timer列表是否有协程需要调度。
+def run(self, *a, **kw):
+        """Run the runloop until abort is called.
+        """
+        # accept and discard variable arguments because they will be
+        # supplied if other greenlets have run and exited before the
+        # hub's greenlet gets a chance to run
+        if self.running:
+            raise RuntimeError("Already running!")
+        try:
+            self.running = True
+            self.stopping = False
+            while not self.stopping:
+                while self.closed:
+                    # We ditch all of these first.
+                    self.close_one()
+                self.prepare_timers()
+                if self.debug_blocking:
+                    self.block_detect_pre()
+                #遍历timer列表，如果该timer被调度，则运行timer(),因为timer有_call_()函数
+                self.fire_timers(self.clock())
+                if self.debug_blocking:
+                    self.block_detect_post()
+                self.prepare_timers()
+                wakeup_when = self.sleep_until()
+                if wakeup_when is None:
+                    sleep_time = self.default_sleep()
+                else:
+                    sleep_time = wakeup_when - self.clock()
+                if sleep_time > 0:
+                    self.wait(sleep_time)
+                else:
+                    #检测socket或者文件读写事件
+                    self.wait(0)
+            else:
+                self.timers_canceled = 0
+                del self.timers[:]
+                del self.next_timers[:]
+        finally:
+            self.running = False
+            self.stopping = False
+
+            
+ #如果timer到达调度时间，则运行timer()           
+ def fire_timers(self, when):
+        t = self.timers
+        heappop = heapq.heappop
+
+        while t:
+            next = t[0]
+
+            exp = next[0]
+            timer = next[1]
+
+            if when < exp:
+                break
+
+            heappop(t)
+
+            try:
+                if timer.called:
+                    self.timers_canceled -= 1
+                else:
+                    timer()
+            except self.SYSTEM_EXCEPTIONS:
+                raise
+            except:
+                self.squelch_timer_exception(timer, sys.exc_info())
+                clear_sys_exc_info()
+ 
+
+#timer(),会调用__call__函数，从而对timer中的协程进行“回调”
+Class Timer(object):
+def __call__(self, *args):
+        if not self.called:
+            self.called = True
+            cb, args, kw = self.tpl
+            try:
+                cb(*args, **kw)
+            finally:
+                try:
+                    del self.tpl
+                except AttributeError:
+                    pass
+```
+
+其它协程调用hub.schedule_call_global(seconds, current.switch)，将自己添加到hub的timer列表中，等到seconds时间到达，会调用current.switch。也就是timer类中\__call__函数中的cb(*args,**kw)。从而switch到该协程执行代码。
+
+“绿色”socket是怎么添加timer？
+
+每当协程中调用socket.recv，socket.send都会向hub添加listener。hub可以通过四种方式的一种来等待listener中的io事件。它们是selects,epolls,kqueue,pyevent。
+
+```python
+#selects.py的wait函数
+
+def wait(self, seconds=None):
+        readers = self.listeners[READ]
+        writers = self.listeners[WRITE]
+        if not readers and not writers:
+            if seconds:
+                time.sleep(seconds)
+            return
+        all_fds = list(readers) + list(writers)
+        try:
+            r, w, er = select.select(readers.keys(), writers.keys(), all_fds, seconds)
+        except select.error as e:
+            if get_errno(e) == errno.EINTR:
+                return
+            elif get_errno(e) in BAD_SOCK:
+                self._remove_bad_fds()
+                return
+            else:
+                raise
+
+        for fileno in er:
+            #切换到listener中的协程
+            readers.get(fileno, noop).cb(fileno)
+            writers.get(fileno, noop).cb(fileno)
+
+        for listeners, events in ((readers, r), (writers, w)):
+            for fileno in events:
+                try:
+                    listeners.get(fileno, noop).cb(fileno)
+                except self.SYSTEM_EXCEPTIONS:
+                    raise
+                except:
+                    self.squelch_exception(fileno, sys.exc_info())
+                    clear_sys_exc_info()
+
+```
+
+```python
+readers.get(fileno, noop).cb(fileno)
+writers.get(fileno, noop).cb(fileno)
+这两个就是用来switch到注册的协程中。
+```
+
+hub继承了它们的wait函数，所以在hub的run函数中调用 self.wait(0)就会执行父的wait函数。
+
+###### subprocess部分源码分析
+
+***
+
+```python
+class Popen(subprocess_orig.Popen):
+    """eventlet-friendly version of subprocess.Popen"""
+    # We do not believe that Windows pipes support non-blocking I/O. At least,
+    # the Python file objects stored on our base-class object have no
+    # setblocking() method, and the Python fcntl module doesn't exist on
+    # Windows. (see eventlet.greenio.set_nonblocking()) As the sole purpose of
+    # this __init__() override is to wrap the pipes for eventlet-friendly
+    # non-blocking I/O, don't even bother overriding it on Windows.
+    if not mswindows:
+        def __init__(self, args, bufsize=0, *argss, **kwds):
+            self.args = args
+            # Forward the call to base-class constructor
+            subprocess_orig.Popen.__init__(self, args, 0, *argss, **kwds)
+            # Now wrap the pipes, if any. This logic is loosely borrowed from
+            # eventlet.processes.Process.run() method.
+            for attr in "stdin", "stdout", "stderr":
+                pipe = getattr(self, attr)
+                if pipe is not None and type(pipe) != greenio.GreenPipe:
+                    # https://github.com/eventlet/eventlet/issues/243
+                    # AttributeError: '_io.TextIOWrapper' object has no attribute 'mode'
+                    mode = getattr(pipe, 'mode', '')
+                    if not mode:
+                        if pipe.readable():
+                            mode += 'r'
+                        if pipe.writable():
+                            mode += 'w'
+                        # ValueError: can't have unbuffered text I/O
+                        if bufsize == 0:
+                            bufsize = -1
+                    wrapped_pipe = greenio.GreenPipe(pipe, mode, bufsize)
+                    setattr(self, attr, wrapped_pipe)
+        __init__.__doc__ = subprocess_orig.Popen.__init__.__doc__
+
+        
+    def wait(self, timeout=None, check_interval=0.01):
+        # Instead of a blocking OS call, this version of wait() uses logic
+        # borrowed from the eventlet 0.2 processes.Process.wait() method.
+        if timeout is not None:
+            endtime = time.time() + timeout
+        try:
+            while True:
+                status = self.poll()
+                if status is not None:
+                    return status
+                if timeout is not None and time.time() > endtime:
+                    raise TimeoutExpired(self.args, timeout)
+                eventlet.sleep(check_interval)
+        except OSError as e:
+            if e.errno == errno.ECHILD:
+                # no child process, this happens if the child process
+                # already died and has been cleaned up
+                return -1
+            else:
+                raise
+    wait.__doc__ = subprocess_orig.Popen.wait.__doc__
+
+    if not mswindows:
+        # don't want to rewrite the original _communicate() method, we
+        # just want a version that uses eventlet.green.select.select()
+        # instead of select.select().
+        _communicate = FunctionType(
+            six.get_function_code(six.get_unbound_function(
+                subprocess_orig.Popen._communicate)),
+            globals())
+        try:
+            _communicate_with_select = FunctionType(
+                six.get_function_code(six.get_unbound_function(
+                    subprocess_orig.Popen._communicate_with_select)),
+                globals())
+            _communicate_with_poll = FunctionType(
+                six.get_function_code(six.get_unbound_function(
+                    subprocess_orig.Popen._communicate_with_poll)),
+                globals())
+        except AttributeError:
+            pass
+```
+
+subproces通过Popen类的__init__函数调用 wrapped_pipe = greenio.GreenPipe(pipe, mode, bufsize)向hub添加管道的listener，然后调用wait进行等待该管道执行完后的返回数据。
